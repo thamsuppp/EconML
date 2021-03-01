@@ -1,6 +1,6 @@
 
 
-wd <- 'C:/Users/isaac/Documents/Isaac/2020-21 Penn Junior/Winter Break 2020/Economic Research PGC/VAR Coding/'
+wd <- 'C:/Users/isaac/Documents/Isaac/2020-21 Penn Junior/Winter Break 2020/Economic Research PGC/EconML/'
 setwd(wd)
 
 ## Function Libraries
@@ -97,6 +97,9 @@ run_models_fn <- function(data_file, nowcast = F, save_name = 'model') {
   Xtest <- model.matrix(form, data=test_data)[,-1]
   Ytest <- test_data$y
   
+  Xall = model.matrix(form, data = all_data)[,-1]
+  Yall = all_data$y
+  
   dataset = substr(data_file, start = 10, stop = nchar(data_file))
 
   set.seed(2020)
@@ -118,18 +121,16 @@ run_models_fn <- function(data_file, nowcast = F, save_name = 'model') {
   ##----------------------------------------------------------------------------------------------------------------------##
   
   # Instantiate all errors (including in-sample)
-  all_err = array()
-  
+  err_all = array(NA, dim = c(65, nrow(all_data)))
   # Instantiate error matrix
   err=array(NA,dim=c(65,length(Ytest)))
   m=1
-  #err[m,1,1:length(Y)]=Y
   
-  err[m,1:length(Ytest)]=Ytest
+  err[m,1:length(Ytest)] = Ytest
+  err_all[m,1:nrow(all_data)] = all_data$y
   
   print(dsds)
   print(dim(train_data))
-  
   
   ########### MACRO RANDOM FOREST #####################
   
@@ -140,9 +141,23 @@ run_models_fn <- function(data_file, nowcast = F, save_name = 'model') {
   arrf = MRF(datamat, y.pos = 1, x.pos = 2:7, S.pos = 2:ncol(datamat), 
              oos.pos = (round(0.7*nrow(datamat))+1):nrow(datamat) , B = 50)
   
-  reg.out.error = arrf$pred - Ytest
+  # Get the GVTPs of the betas
+
+  # Take the mean of the non-NA (i.e. out of bag) beta estimates for each observation
+  oob_betas = arrf$betas.draws %>% apply(c(1,2), function(x) mean(x, na.rm = T))
+  x_mat = datamat[,2:7]
+  
+  # Get the OOB in-sample predictions
+  oob_preds = rep(NA, nrow(oob_betas))
+  for (i in 1:length(oob_preds)) {
+    oob_preds[i] = sum(oob_betas[i, 2:ncol(oob_betas)] * x_mat[i, ]) + oob_betas[i, 1]
+  }
+  error = oob_preds - all_data$y
+  Rsq_out = arrf$pred - Ytest
   Rsq_out[dataset, "ARRF"] <- r.squared.fair(arrf$pred, Ytest, Ytrain)
+  
   m=m+1
+  err_all[m, 1:nrow(all_data)] = error
   err[m,1:length(Ytest)]=reg.out.error
   
   print('Done with ARRF')
@@ -153,14 +168,27 @@ run_models_fn <- function(data_file, nowcast = F, save_name = 'model') {
   if (nowcast == T) {
     faarrf = MRF(datamat, y.pos = 1, x.pos = c(2:7,14:17), S.pos = 2:ncol(datamat), 
                  oos.pos = (round(0.7*nrow(datamat))+1):nrow(datamat) , B = 50)
+    x_mat = datamat[,c(2:7, 14:17)]
   } else {
     faarrf = MRF(datamat, y.pos = 1, x.pos = c(2:7,15:18), S.pos = 2:ncol(datamat), 
                  oos.pos = (round(0.7*nrow(datamat))+1):nrow(datamat) , B = 50)
+    x_mat = datamat[,c(2:7, 15:18)]
   }
   
-  reg.out.error = faarrf$pred - Ytest
-  Rsq_out[dataset, "FAARRF"] <- r.squared.fair(faarrf$pred, Ytest, Ytrain)
+  # Take the mean of the non-NA (i.e. out of bag) beta estimates for each observation
+  oob_betas = faarrf$betas.draws %>% apply(c(1,2), function(x) mean(x, na.rm = T))
+
+  # Get the OOB in-sample predictions
+  oob_preds = rep(NA, nrow(oob_betas))
+  for (i in 1:length(oob_preds)) {
+    oob_preds[i] = sum(oob_betas[i, 2:ncol(oob_betas)] * x_mat[i, ]) + oob_betas[i, 1]
+  }
+  error = oob_preds - all_data$y
+  Rsq_out = arrf$pred - Ytest
+  Rsq_out[dataset, "FAARRF"] <- r.squared.fair(arrf$pred, Ytest, Ytrain)
+  
   m=m+1
+  err_all[m, 1:nrow(all_data)] = error
   err[m,1:length(Ytest)]=reg.out.error
   
   # mrf_preds <- data.frame(arrf$pred, faarrf$pred, Ytest)
@@ -182,12 +210,14 @@ run_models_fn <- function(data_file, nowcast = F, save_name = 'model') {
   } else {
     reg <- lm(y~L_0y + L_1y+L_2y +L_3y + L_4y+L_5y , data=train_data)
   }
-  
-  reg.out.error <- predict(reg, newdata=test_data)-Ytest
+  # In sample errors
+  error = predict(reg, newdata = all_data) - all_data$y
+  reg.out.error = predict(reg, newdata=test_data)-Ytest
   
   Rsq_in[dataset, "AR"] <- r.squared.fair(predict.lm(reg, train_data), Ytrain, Ytrain)
   Rsq_out[dataset, "AR"] <- r.squared.fair(predict.lm(reg, test_data), Ytest, Ytrain)
   m=m+1
+  err_all[m, 1:nrow(all_data)] = error
   err[m,1:length(Ytest)]=reg.out.error
     
   # FAAR model - adding the Macro Factors
@@ -202,10 +232,12 @@ run_models_fn <- function(data_file, nowcast = F, save_name = 'model') {
                 L0_F1 + L0_F2 + L1_F1 + L1_F2, data = train_data)
   }
   
+  error = predict(reg, newdata = all_data) - all_data$y
   reg.out.error <- predict(reg, newdata=test_data)-Ytest
   Rsq_in[dataset, "FA-AR"] <- r.squared.fair(predict.lm(reg, train_data), Ytrain, Ytrain)
   Rsq_out[dataset, "FA-AR"] <- r.squared.fair(predict.lm(reg, test_data), Ytest, Ytrain)
   m=m+1
+  err_all[m, 1:nrow(all_data)] = error
   err[m,1:length(Ytest)]=reg.out.error
   
   print('Done with Macro Block')
@@ -220,10 +252,12 @@ run_models_fn <- function(data_file, nowcast = F, save_name = 'model') {
   lasso <- glmnet(Xtrain, Ytrain, lambda=lasso.lambda)
   # Get oos errors
   lasso.out.error <- predict(lasso, Xtest)-Ytest
+  error = predict(lasso, Xall) - Yall
   
   Rsq_in[dataset, "lasso"] <- r.squared.fair(predict(lasso, Xtrain), Ytrain, Ytrain)
   Rsq_out[dataset, "lasso"] <- r.squared.fair(predict(lasso, Xtest), Ytest,Ytrain)
   m=m+1
+  err_all[m, 1:nrow(all_data)] = error
   err[m,1:length(Ytest)]=lasso.out.error
   
   print('Done with Lasso')
@@ -232,9 +266,11 @@ run_models_fn <- function(data_file, nowcast = F, save_name = 'model') {
   ridge.lambda <- cv.glmnet(Xtrain, Ytrain, alpha=0, nfolds=10, type.measure = "deviance")$lambda.1se
   ridge <- glmnet(Xtrain, Ytrain, lambda=ridge.lambda)
   ridge.out.error <- predict(ridge, Xtest)-Ytest
+  error = predict(ridge, Xall) - Yall
   Rsq_in[dataset, "ridge"] <- r.squared.fair(predict(ridge, Xtrain), Ytrain, Ytrain)
   Rsq_out[dataset, "ridge"] <- r.squared.fair(predict(ridge, Xtest), Ytest,Ytrain)
   m=m+1
+  err_all[m, 1:nrow(all_data)] = error
   err[m,1:length(Ytest)]=ridge.out.error
   
   print('Done with Ridge')
@@ -254,17 +290,26 @@ run_models_fn <- function(data_file, nowcast = F, save_name = 'model') {
   
   #single <-rpart(form,data=train_data, minsplit=10, cp=0.01)
   single.out.error <- predict(single, as.data.frame(Xtest))-Ytest
+  error = predict(single, as.data.frame(Xall)) - Yall
+  
   Rsq_in[dataset, "single tree"] <- r.squared.fair(predict(single, as.data.frame(Xtrain)), Ytrain, Ytrain)
   Rsq_out[dataset, "single tree"] <- r.squared.fair(predict(single, as.data.frame(Xtest)), Ytest,Ytrain)
   m=m+1
+  err_all[m, 1:nrow(all_data)] = error
   err[m,1:length(Ytest)]=single.out.error
   
   # Random Forest - untuned
   rf <- ranger(form, data=train_data, mtry=ncol(train_data)/3, importance='permutation',num.trees =500, min.node.size=3,num.threads = 1)
   rf.out.error <- predict(rf, test_data)$prediction-Ytest
+  
+  # Combine in-sample OOB preds with test data preds
+  all_preds = c(rf$predictions, predict(rf, test_data)$prediction)
+  error = all_preds - Yall
+  
   Rsq_in[dataset, "random forest"] <- r.squared.fair(predict(rf, train_data)$prediction, Ytrain, Ytrain)
   Rsq_out[dataset, "random forest"] <- r.squared.fair(predict(rf, test_data)$prediction, Ytest, Ytrain)
   m=m+1
+  err_all[m, 1:nrow(all_data)] = error
   err[m,1:length(Ytest)]=rf.out.error
   
   print('Done with RF Untuned')
@@ -286,10 +331,14 @@ run_models_fn <- function(data_file, nowcast = F, save_name = 'model') {
   
   suggested.degree=as.numeric(tuned_mars$bestTune[2])
   mod = tuned_mars$finalModel
+  
+  all_preds = c(mod$predictions, predict(mod, as.data.frame(Xtest))$predictions)
+  error = all_preds - Yall
   out.error <- predict(mod, as.data.frame(Xtest))$predictions -Ytest
   Rsq_in[dataset, 'RF tuned'] <- r.squared.fair(predict(mod, as.data.frame(Xtrain))$predictions, Ytrain, Ytrain)
   Rsq_out[dataset, 'RF tuned'] <- r.squared.fair(predict(mod, as.data.frame(Xtest))$predictions, Ytest, Ytrain)
   m=m+1
+  err_all[m, 1:nrow(all_data)] = error
   err[m,1:length(Ytest)]=out.error
   
   print('Done with RF Tuned')
@@ -313,10 +362,13 @@ run_models_fn <- function(data_file, nowcast = F, save_name = 'model') {
   #?
   suggested.degree=as.numeric(tuned_mars$bestTune[2])
   mod = tuned_mars$finalModel
+  
+  all_preds = c(mod$predictions, predict(mod, as.data.frame(Xtest),n.trees = mod$n.trees)$predictions)
   out.error <- predict(mod, as.data.frame(Xtest),n.trees = mod$n.trees)-Ytest
   Rsq_out[dataset, 'GBM tuned'] <- r.squared.fair(predict(mod, as.data.frame(Xtrain),n.trees = mod$n.trees), Ytrain, Ytrain)
   Rsq_out[dataset, 'GBM tuned'] <- r.squared.fair(predict(mod, as.data.frame(Xtest),n.trees = mod$n.trees), Ytest, Ytrain)
   m=m+1
+  err_all[m, 1:nrow(all_data)] = error
   err[m,1:length(Ytest)]=out.error
   
   print('Done with GBM Tuned')
@@ -338,7 +390,7 @@ run_models_fn <- function(data_file, nowcast = F, save_name = 'model') {
   
   # Save the data for multiple datasets together
   filename=paste(path,data_file,save_name,'.RData',sep='') #,yymmdd ,'_v',1,'
-  save(Rsq_in,Rsq_out,err,dataset,Ytest,file=filename)
+  save(Rsq_in,Rsq_out,err, err_all, dataset,Ytest,file=filename)
 
 }
 
@@ -346,12 +398,12 @@ run_models_fn <- function(data_file, nowcast = F, save_name = 'model') {
 
 #,'macrotoy_gdph2', 'macrotoy_unemph2', 'macrotoy_infh2'
 
-data_files <- c('macrotoy_unemph1', 'macrotoy_infh1')
-save_name = '22feb_nowcast'
+data_files <- c('macrotoy_gdph2', 'macrotoy_unemph1', 'macrotoy_infh1')
+save_name = '1mar_oob'
 
 for (data_file in data_files) {
   
-  run_models_fn(data_file, save_name = save_name, nowcast = T)
+  run_models_fn(data_file, save_name = save_name, nowcast = F)
   print(paste('Done with ', data_file))
   print(Sys.time())
   
