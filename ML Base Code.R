@@ -153,7 +153,7 @@ run_models_fn <- function(data_file, nowcast = F, save_name = 'model') {
     oob_preds[i] = sum(oob_betas[i, 2:ncol(oob_betas)] * x_mat[i, ]) + oob_betas[i, 1]
   }
   error = oob_preds - all_data$y
-  Rsq_out = arrf$pred - Ytest
+  reg.out.error = arrf$pred - Ytest
   Rsq_out[dataset, "ARRF"] <- r.squared.fair(arrf$pred, Ytest, Ytrain)
   
   m=m+1
@@ -184,7 +184,7 @@ run_models_fn <- function(data_file, nowcast = F, save_name = 'model') {
     oob_preds[i] = sum(oob_betas[i, 2:ncol(oob_betas)] * x_mat[i, ]) + oob_betas[i, 1]
   }
   error = oob_preds - all_data$y
-  Rsq_out = arrf$pred - Ytest
+  reg.out.error = arrf$pred - Ytest
   Rsq_out[dataset, "FAARRF"] <- r.squared.fair(arrf$pred, Ytest, Ytrain)
   
   m=m+1
@@ -363,7 +363,7 @@ run_models_fn <- function(data_file, nowcast = F, save_name = 'model') {
   suggested.degree=as.numeric(tuned_mars$bestTune[2])
   mod = tuned_mars$finalModel
   
-  all_preds = c(mod$predictions, predict(mod, as.data.frame(Xtest),n.trees = mod$n.trees)$predictions)
+  all_preds = c(mod$predictions, predict(mod, as.data.frame(Xtest),n.trees = mod$n.trees))
   out.error <- predict(mod, as.data.frame(Xtest),n.trees = mod$n.trees)-Ytest
   Rsq_out[dataset, 'GBM tuned'] <- r.squared.fair(predict(mod, as.data.frame(Xtrain),n.trees = mod$n.trees), Ytrain, Ytrain)
   Rsq_out[dataset, 'GBM tuned'] <- r.squared.fair(predict(mod, as.data.frame(Xtest),n.trees = mod$n.trees), Ytest, Ytrain)
@@ -380,13 +380,13 @@ run_models_fn <- function(data_file, nowcast = F, save_name = 'model') {
   par(mfrow=c(1,1))
   
   # Save Path
-  path = paste(wd, 'ML Results/')
+  path = paste(wd, 'ML Results/', sep = '')
   
   # Make a matrix of the OOS Rsquared 
-  png(file=paste(path,data_file,save_name,'.png',sep=''))
-  barplot(as.matrix(Rsq_out)[dataset,],horiz=TRUE,col=1:ncol(Rsq_in),las=2)
-  title(paste(dataset,'R^2 out',sep=' - '))
-  dev.off()
+  #png(file=paste(path,data_file,save_name,'.png',sep=''))
+  #barplot(as.matrix(Rsq_out)[dataset,],horiz=TRUE,col=1:ncol(Rsq_in),las=2)
+  #title(paste(dataset,'R^2 out',sep=' - '))
+  #dev.off()  
   
   # Save the data for multiple datasets together
   filename=paste(path,data_file,save_name,'.RData',sep='') #,yymmdd ,'_v',1,'
@@ -398,7 +398,7 @@ run_models_fn <- function(data_file, nowcast = F, save_name = 'model') {
 
 #,'macrotoy_gdph2', 'macrotoy_unemph2', 'macrotoy_infh2'
 
-data_files <- c('macrotoy_gdph2', 'macrotoy_unemph1', 'macrotoy_infh1')
+data_files <- c('macrotoy_gdph1', 'macrotoy_unemph1', 'macrotoy_infh1')
 save_name = '1mar_oob'
 
 for (data_file in data_files) {
